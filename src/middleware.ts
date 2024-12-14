@@ -4,15 +4,40 @@
 
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
+import { Redis } from '@upstash/redis';
+import { Ratelimit } from '@upstash/ratelimit';
+
+
+const redis = new Redis({
+  url: process.env.UPSTASH_REDIS_REST_URL,
+  token: process.env.UPSTASH_REDIS_REST_TOKEN,
+});
+
+export const rateLimiter = new Ratelimit({
+  redis,
+  limiter: Ratelimit.slidingWindow(5, '60 s'),
+  prefix: 'ratelimit:ai-chat',
+  analytics: true,
+});
 
 export async function middleware(request: NextRequest) {
   try {
 
-    const response = NextResponse.next();
+    const ip = request.headers.get("x-forwarded-for") ?? '127.0.0.1'
 
+    const { success, limit, reset, remaining } = await rateLimiter.limit(ip);
+
+    const response = success
+      ? NextResponse.next()
+      : NextResponse.json(
+        { error: 'Too many requests.' },
+        { status: 429 }
+      )
+    
+      response.headers.set( 'X-RateLimitLimit', limit.toString() )
+      response.headers.set('X-RateLimit-Remaining', remaining.toString() )
+      response.headers.set('X-RateLimit-Reset', reset.toString() ) 
     return response;
-
-
 
   } catch (error) {
 
